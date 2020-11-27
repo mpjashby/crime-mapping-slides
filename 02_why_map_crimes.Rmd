@@ -1,0 +1,311 @@
+---
+title: "Why put crimes on maps?"
+output:
+  xaringan::moon_reader:
+    css: ["ucl-basic.css", "animate.css"]
+    lib_dir: libs
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+      ratio: "16:9"
+---
+
+```{r setup, include=FALSE}
+options(htmltools.dir.version = FALSE)
+
+# set plots to have a transparent background, see
+# https://gist.github.com/cboettig/5600558
+knitr::opts_chunk$set(cache = TRUE, dev.args = list(bg = "transparent"))
+```
+
+```{r load packages, include=FALSE}
+library("ggrepel")
+library("sf")
+library("tidyverse")
+```
+
+
+
+class: speaker-notes
+
+"In this video I'm going to talk about why maps are useful for understanding crime"
+
+"Crime is a geographic phenomenon – all types of crime are concentrated in particular places, and understanding the relationships between crime and places can be really useful for crime prevention"
+
+---
+
+class: green-screen, animated, fadeIn
+
+<!-- blank slide for green screen fade -->
+
+
+
+---
+
+class: green-screen, big-picture, animated, fadeIn
+
+```{r load violence data, include=FALSE}
+# load crime counts
+ew_violence_in_grid <- read_rds(here::here("data/ew_violence_in_grid.Rds"))
+
+# load police force areas
+forces <- st_read(
+  "https://opendata.arcgis.com/datasets/1fc3e34edece4cd58dabac422c3556c9_0.geojson",
+  quiet = TRUE
+) %>%
+  janitor::clean_names() %>%
+  select(pfa19cd, pfa19nm) %>%
+  # convert to British National Grid to match the crimes layer
+  st_transform(27700)
+
+# local authority districts
+districts <- st_read(
+  "https://opendata.arcgis.com/datasets/0e07a8196454415eab18c40a54dfbbef_0.geojson",
+  quiet = TRUE
+) %>%
+  janitor::clean_names() %>%
+  # filter out all except England and Wales
+  filter(str_detect(lad19cd, "^E") | str_detect(lad19cd, "^W")) %>%
+  select(lad19cd, district = lad19nm) %>%
+  # convert to British National Grid to match the crimes layer
+  st_transform(27700)
+```
+
+```{r create outlines, include=FALSE}
+# create outline of England and Wales
+ew_outline <- forces %>% st_union() %>% st_as_sf()
+
+# create outline of London
+london_outline <- forces %>% 
+  filter(pfa19nm %in% c("London, City of", "Metropolitan Police")) %>% 
+  st_union() %>% 
+  st_as_sf() %>% 
+  mutate(region = "London")
+```
+
+```{r national violence map, echo=FALSE, message=FALSE, warning=FALSE, fig.height=10, fig.width=13}
+# create labels for major cities
+ew_labels <- tribble(
+  ~label, ~x, ~y,
+  "London", -0.1278, 51.5074,
+  "Birmingham", -1.8904, 52.4862,
+  "Manchester", -2.2426, 53.4808,
+  "Newcastle", -1.6178, 54.9783,
+  "Bristol", -2.5879, 51.4545
+) %>% 
+  st_as_sf(coords = c("x", "y"), remove = FALSE, crs = 4326) %>% 
+  st_transform(27700) %>% 
+  mutate(
+    x = unname(st_coordinates(.)[, 1]),
+    y = unname(st_coordinates(.)[, 2])
+  )
+
+# plot map
+ew_violence_in_grid %>%
+  mutate(
+    group = ifelse(cperc < 0.5, "half of all\nviolence", NA_character_)
+  ) %>%
+  filter(!is.na(group)) %>%
+  ggplot() +
+  geom_sf(data = ew_outline, colour = "white", fill = "white", size = 4) +
+  geom_sf(data = ew_outline, colour = NA, fill = "white") +
+  geom_raster(aes(x = x, y = y, fill = group), na.rm = TRUE, fill = "#F6BE00") +
+  geom_sf(data = forces, colour = "grey40", fill = NA) +
+  ggrepel::geom_label_repel(
+    aes(x = x, y = y, label = label), data = ew_labels, colour = "grey20", 
+    label.size = NA, min.segment.length = 0
+  ) +
+  geom_sf(data = ew_labels) +
+  # constrain plot height to area between Portland Bill and Newcastle upon Tyne
+  lims(x = range(ew_violence_in_grid$x), y = c(70167, 565390)) + 
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "transparent", colour = NA),
+    plot.background = element_rect(fill = "transparent", colour = NA),
+    plot.margin = margin(0, 0, 0, 0)
+  )
+```
+
+
+
+---
+
+class: green-screen, big-picture, animated, fadeIn
+
+```{r london violence map, echo=FALSE, message=FALSE, warning=FALSE, fig.height=10, fig.width=10}
+# create labels for major landmarks
+london_labels <- tribble(
+  ~label, ~x, ~y,
+  "Trafalgar Square", -0.1281, 51.5080,
+  "Heathrow Airport", -0.4543, 51.4700,
+  "UCL campus", -0.1340, 51.5246
+) %>% 
+  st_as_sf(coords = c("x", "y"), remove = FALSE, crs = 4326) %>% 
+  st_transform(27700) %>% 
+  mutate(
+    x = unname(st_coordinates(.)[, 1]),
+    y = unname(st_coordinates(.)[, 2])
+  ) %>% 
+  st_set_geometry(NULL)
+
+# plot map
+ew_violence_in_grid %>%
+  filter(force %in% c("London, City of", "Metropolitan Police")) %>% 
+  arrange(desc(crimes)) %>% 
+  mutate(
+    perc = crimes / sum(crimes),
+    cperc = cumsum(perc),
+    group = ifelse(cperc < 0.5, "half of all\nviolence", NA_character_)
+  ) %>%
+  filter(!is.na(group)) %>%
+  ggplot() +
+  geom_sf(data = london_outline, colour = "white", fill = "white", size = 4) +
+  geom_sf(data = london_outline, colour = NA, fill = "white") +
+  geom_raster(aes(x = x, y = y, fill = group), na.rm = TRUE, fill = "#F6BE00") +
+  geom_sf(data = filter(districts, str_detect(lad19cd, "^E09")), 
+          colour = "grey40", fill = NA) +
+  ggrepel::geom_label_repel(
+    aes(x = x, y = y, label = label), data = london_labels, colour = "grey20", 
+    label.size = NA, min.segment.length = 0
+  ) +
+  geom_point(aes(x = x, y = y), data = london_labels) +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "transparent", colour = NA),
+    plot.background = element_rect(fill = "transparent", colour = NA),
+    plot.margin = margin(0, 0, 0, 0)
+  )  
+```
+
+
+
+---
+
+class: green-screen, big-picture, animated, fadeIn
+
+```{r camden violence map, echo=FALSE, message=FALSE, warning=FALSE, fig.height=10, fig.width=10}
+# create labels for local landmarks
+camden_labels <- tribble(
+  ~label, ~x, ~y,
+  "Camden Town", -0.1426, 51.5390,
+  "Covent Garden", -0.1240, 51.5117,
+  "Kings Cross", -0.1246, 51.5347,
+  "UCL campus", -0.1340, 51.5246
+) %>% 
+  st_as_sf(coords = c("x", "y"), remove = FALSE, crs = 4326) %>% 
+  st_transform(27700) %>% 
+  mutate(
+    x = unname(st_coordinates(.)[, 1]),
+    y = unname(st_coordinates(.)[, 2])
+  )
+
+# plot map
+ew_violence_in_grid %>%
+  filter(district == "Camden") %>% 
+  arrange(desc(crimes)) %>% 
+  mutate(
+    perc = crimes / sum(crimes),
+    cperc = cumsum(perc),
+    group = ifelse(cperc < 0.5, "half of all\nviolence", NA_character_)
+  ) %>%
+  filter(!is.na(group)) %>%
+  ggplot() +
+  geom_sf(data = filter(districts, district == "Camden"), colour = "white", 
+          fill = "white", size = 4) +
+  geom_sf(data = filter(districts, district == "Camden"), colour = NA, 
+          fill = "white") +
+  geom_raster(aes(x = x, y = y, fill = group), na.rm = TRUE, fill = "#F6BE00") +
+  geom_sf(data = filter(districts, district == "Camden"), colour = "grey40", 
+          fill = NA) +
+  geom_label(
+    aes(x = x, y = y, label = str_wrap(label, 9)), data = camden_labels, 
+    colour = "grey20", lineheight = 0.9, label.size = NA
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "transparent", colour = NA),
+    plot.background = element_rect(fill = "transparent", colour = NA),
+    plot.margin = margin(0, 0, 0, 0)
+  )  
+```
+
+
+
+---
+
+class: green-screen, animated, fadeIn
+
+<!-- blank slide for green screen fade -->
+
+
+
+
+---
+
+class: big-picture, animated, fadeIn
+
+```{r crime concentration studies map, echo=FALSE}
+countries <- rnaturalearth::ne_countries(returnclass = "sf") %>% 
+  as("Spatial") %>% 
+  maptools::nowrapRecenter() %>% 
+  fortify()
+
+concentration_studies <- tribble(
+  ~lng, ~lat, ~city, ~perc,
+  -75.6972, 45.4215, "Ottawa", 0.017,
+  -122.3321, 47.6062, "Seattle", 0.054,
+  34.7818, 32.0853, "Tel Aviv", 0.045,
+  -74.0060, 40.7128, "New York", 0.05,
+  -47.0738, -22.9329, "Campinas", 0.037,
+  4.3007, 52.0705, "The Hague", 0.068,
+  -93.3563, 45.0941, "Brooklyn Park", 0.02
+) %>% 
+  mutate(
+    label = str_glue("{scales::percent(perc, accuracy = 1)} in {city}")
+  )
+
+ggplot() +
+  geom_polygon(
+    aes(x = long, y = lat), 
+    data = countries, 
+    colour = NA, 
+    fill = "grey25", 
+    size = 0.25
+  ) +
+  geom_label_repel(
+    aes(x = lng, y = lat, label = label), 
+    data = concentration_studies, 
+    fill = alpha("white", 0.67), 
+    label.size = NA,
+    box.padding = 0.5,
+    min.segment.length = 1
+  ) +
+  geom_point(
+    aes(x = lng, y = lat), 
+    data = concentration_studies, 
+    colour = "red", 
+    size = 3
+  ) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  coord_map(projection = "ortho", orientation = c(0, 0, 0)) +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "black", colour = NA),
+    plot.background = element_rect(fill = "transparent", colour = NA),
+    plot.margin = margin(0, 0, 0, 0)
+  )
+```
